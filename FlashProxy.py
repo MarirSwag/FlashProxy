@@ -23,8 +23,8 @@ CRYPTOBOT_TOKEN = "529805:AAH22XbKK6qPCv07XYL9pFf7aeVQPx4NQkR"
 ADMIN_ID = 1967888210  # твой Telegram ID для ручной оплаты
 
 # Реквизиты для ручной оплаты
-CARD_NUMBER = "2200 0000 0000 0000"
-CARD_HOLDER = "Имя Фамилия"
+CARD_NUMBER = "2200 7010 5701 8225"
+CARD_HOLDER = "Праксонов Максим"
 
 BASE_URL = f"https://px6.link/api/{API_KEY}"
 CRYPTOBOT_API = "https://pay.crypt.bot/api"
