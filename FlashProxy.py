@@ -19,9 +19,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 API_KEY = "2ceb6b52bf-9b7fd55343-c444559a23"
 BOT_TOKEN = "8124149270:AAFRVZ_q6rA9f9cScJIEs0lxYYYFlEGapvI"
 CRYPTOBOT_TOKEN = "529805:AAH22XbKK6qPCv07XYL9pFf7aeVQPx4NQkR"
-ADMIN_ID = 1967888210  # твой Telegram ID
+ADMIN_ID = 1967888210
 
-# Ссылка на сбор средств (Тинькофф, СБП, ЮMoney и т.д.)
 PAYMENT_LINK = "https://www.tbank.ru/cf/5COiqw9ez0B"
 
 BASE_URL = f"https://px6.link/api/{API_KEY}"
@@ -76,7 +75,6 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Ожидающие оплаты по ссылке
 pending_payments = {}
 
 
@@ -167,8 +165,6 @@ def api_buy_proxy(country: str, period: int) -> dict:
                 "pass": p["pass"],
                 "type": p["type"],
                 "date_end": p["date_end"],
-                "balance": data.get("balance", "?"),
-                "currency": data.get("currency", ""),
             }
         else:
             error_id = data.get("error_id", 0)
@@ -320,10 +316,6 @@ def main_kb() -> InlineKeyboardMarkup:
             text="🛒 Купить прокси",
             callback_data="buy"
         )],
-        [InlineKeyboardButton(
-            text="💰 Баланс",
-            callback_data="balance"
-        )],
     ])
 
 
@@ -455,22 +447,6 @@ async def cb_cancel(callback: CallbackQuery, state: FSMContext):
         "❌ Отменено.",
         reply_markup=main_kb(),
         parse_mode="HTML"
-    )
-    await callback.answer()
-
-
-@dp.callback_query(F.data == "balance")
-async def cb_balance(callback: CallbackQuery):
-    result = api_get_balance()
-    if result["ok"]:
-        text = (
-            f"💰 <b>Баланс Proxy6:</b> "
-            f"{result['balance']} {result['currency']}"
-        )
-    else:
-        text = f"❌ {result['error']}"
-    await callback.message.edit_text(
-        text, reply_markup=menu_btn(), parse_mode="HTML"
     )
     await callback.answer()
 
@@ -765,7 +741,7 @@ async def cb_check_crypto(callback: CallbackQuery):
         )
 
 
-# ========== ОПЛАТА: ССЫЛКА НА ПЕРЕВОД ==========
+# ========== ОПЛАТА: ССЫЛКА ==========
 @dp.callback_query(
     F.data == "pay_link",
     BuyProxy.choosing_payment
@@ -796,7 +772,6 @@ async def cb_pay_link(
     await state.set_state(BuyProxy.waiting_confirm)
     await state.update_data(tariff=tariff_key, period=period_key)
 
-    # Сохраняем заявку
     pending_payments[callback.from_user.id] = {
         "tariff": tariff_key,
         "period": period_key,
@@ -861,7 +836,6 @@ async def cb_paid_link(callback: CallbackQuery, state: FSMContext):
         f'{user.first_name}</a>'
     )
 
-    # Уведомляем админа
     await bot.send_message(
         chat_id=ADMIN_ID,
         text=(
@@ -897,7 +871,7 @@ async def cb_paid_link(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ========== АДМИН: ПОДТВЕРЖДЕНИЕ / ОТКЛОНЕНИЕ ==========
+# ========== АДМИН ==========
 @dp.callback_query(F.data.startswith("approve_"))
 async def cb_approve(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -928,8 +902,6 @@ async def cb_approve(callback: CallbackQuery):
         tariff_key=payment["tariff"],
         period_key=payment["period"]
     )
-
-    logger.info(f"Link payment approved for {user_id}")
 
 
 @dp.callback_query(F.data.startswith("reject_"))
