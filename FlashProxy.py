@@ -14,17 +14,15 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.methods import CreateInvoiceLink
 
 # ===================== НАСТРОЙКИ =====================
 API_KEY = "2ceb6b52bf-9b7fd55343-c444559a23"
 BOT_TOKEN = "8124149270:AAFRVZ_q6rA9f9cScJIEs0lxYYYFlEGapvI"
 CRYPTOBOT_TOKEN = "529805:AAH22XbKK6qPCv07XYL9pFf7aeVQPx4NQkR"
-ADMIN_ID = 1967888210  # твой Telegram ID для ручной оплаты
+ADMIN_ID = 1967888210  # твой Telegram ID
 
-# Реквизиты для ручной оплаты
-CARD_NUMBER = "2200 7010 5701 8225"
-CARD_HOLDER = "Праксонов Максим"
+# Ссылка на сбор средств (Тинькофф, СБП, ЮMoney и т.д.)
+PAYMENT_LINK = "https://www.tbank.ru/cf/5COiqw9ez0B"
 
 BASE_URL = f"https://px6.link/api/{API_KEY}"
 CRYPTOBOT_API = "https://pay.crypt.bot/api"
@@ -78,7 +76,7 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Хранилище ожидающих оплат
+# Ожидающие оплаты по ссылке
 pending_payments = {}
 
 
@@ -87,8 +85,7 @@ class BuyProxy(StatesGroup):
     choosing_tariff = State()
     choosing_period = State()
     choosing_payment = State()
-    waiting_screenshot = State()
-    confirming = State()
+    waiting_confirm = State()
 
 
 # ===================== PROXY6 API =====================
@@ -118,6 +115,31 @@ def api_get_count(country: str) -> dict:
         return {"ok": False, "error": data.get("error", "?")}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+def api_check_before_buy(country: str, period: int) -> dict:
+    count = api_get_count(country)
+    if count["ok"] and int(count["count"]) == 0:
+        return {"ok": False, "error": "Нет прокси в наличии"}
+    try:
+        url = (
+            f"{BASE_URL}/getprice"
+            f"?count=1&period={period}&version={PROXY_VERSION}"
+        )
+        data = requests.get(url, timeout=10).json()
+        if data["status"] == "yes":
+            price = float(data["price"])
+            balance_data = api_get_balance()
+            if balance_data["ok"]:
+                balance = float(balance_data["balance"])
+                if balance < price:
+                    return {
+                        "ok": False,
+                        "error": "Временно нет в наличии"
+                    }
+        return {"ok": True}
+    except:
+        return {"ok": True}
 
 
 def api_buy_proxy(country: str, period: int) -> dict:
@@ -183,7 +205,7 @@ def cryptobot_create_invoice(
             "currency_type": "fiat",
             "fiat": "RUB",
             "amount": str(amount),
-            "description": f"Прокси SOCKS5",
+            "description": "Прокси SOCKS5",
             "payload": payload,
             "expires_in": 3600,
         }
@@ -222,7 +244,6 @@ def cryptobot_check_invoice(invoice_id: int) -> dict:
             return {
                 "ok": True,
                 "status": invoice["status"],
-                "payload": invoice.get("payload", ""),
             }
         return {"ok": False, "error": "Счёт не найден"}
     except Exception as e:
@@ -281,10 +302,7 @@ async def deliver_proxy(
             reply_markup=after_buy_kb(),
             parse_mode="HTML"
         )
-        logger.info(
-            f"Delivered proxy to {chat_id}: "
-            f"{host}:{port}"
-        )
+        logger.info(f"Delivered proxy to {chat_id}: {host}:{port}")
     else:
         await bot.send_message(
             chat_id,
@@ -357,25 +375,8 @@ def payment_kb(period_key: str) -> InlineKeyboardMarkup:
             callback_data="pay_crypto"
         )],
         [InlineKeyboardButton(
-            text=f"💳 Перевод на карту ({period_data['price']} ₽)",
-            callback_data="pay_card"
-        )],
-        [InlineKeyboardButton(
-            text="⬅️ Назад",
-            callback_data="back_period"
-        )],
-        [InlineKeyboardButton(
-            text="❌ Отмена",
-            callback_data="cancel"
-        )],
-    ])
-
-
-def confirm_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text="✅ Оплатить и получить",
-            callback_data="confirm"
+            text=f"💳 Перевод ({period_data['price']} ₽)",
+            callback_data="pay_link"
         )],
         [InlineKeyboardButton(
             text="⬅️ Назад",
@@ -409,15 +410,6 @@ def menu_btn() -> InlineKeyboardMarkup:
     ])
 
 
-def cancel_waiting_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text="❌ Отменить",
-            callback_data="cancel"
-        )]
-    ])
-
-
 # ===================== ОБРАБОТЧИКИ =====================
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
@@ -438,7 +430,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         f"💳 <b>Способы оплаты:</b>\n"
         f"├ ⭐ Telegram Stars\n"
         f"├ 🤖 CryptoBot\n"
-        f"└ 💳 Перевод на карту\n\n"
+        f"└ 💳 Перевод по ссылке\n\n"
         f"Нажми <b>«Купить прокси»</b> 👇",
         reply_markup=main_kb(),
         parse_mode="HTML"
@@ -596,6 +588,20 @@ async def cb_pay_stars(
     tariff = TARIFFS.get(tariff_key, TARIFFS["ru"])
     period_data = PERIODS.get(period_key, PERIODS["7"])
 
+    check = api_check_before_buy(
+        tariff["country"], period_data["days"]
+    )
+    if not check["ok"]:
+        await state.clear()
+        await callback.message.edit_text(
+            f"❌ <b>{check['error']}</b>\n\n"
+            f"Попробуй позже или напиши админу.",
+            reply_markup=after_buy_kb(),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+
     await state.clear()
 
     prices = [
@@ -662,7 +668,22 @@ async def cb_pay_crypto(
     data = await state.get_data()
     tariff_key = data.get("tariff", "ru")
     period_key = data.get("period", "7")
+    tariff = TARIFFS.get(tariff_key, TARIFFS["ru"])
     period_data = PERIODS.get(period_key, PERIODS["7"])
+
+    check = api_check_before_buy(
+        tariff["country"], period_data["days"]
+    )
+    if not check["ok"]:
+        await state.clear()
+        await callback.message.edit_text(
+            f"❌ <b>{check['error']}</b>\n\n"
+            f"Попробуй позже или напиши админу.",
+            reply_markup=after_buy_kb(),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
 
     await state.clear()
 
@@ -675,20 +696,26 @@ async def cb_pay_crypto(
 
     if result["ok"]:
         invoice_id = result["invoice_id"]
-
         await callback.message.edit_text(
             f"🤖 <b>Счёт создан!</b>\n\n"
             f"💵 Сумма: <b>{period_data['price']} ₽</b>\n"
             f"⏰ Счёт действует 1 час\n\n"
-            f"Нажми кнопку ниже для оплаты 👇",
+            f"<b>Инструкция:</b>\n"
+            f"1️⃣ Нажми кнопку <b>«Оплатить»</b>\n"
+            f"2️⃣ Оплати в CryptoBot\n"
+            f"3️⃣ Вернись сюда и нажми <b>«Я оплатил»</b>\n"
+            f"4️⃣ Получи прокси 🎉",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
-                    text="💳 Оплатить через CryptoBot",
+                    text="💳 Оплатить",
                     url=result["url"]
                 )],
                 [InlineKeyboardButton(
                     text="✅ Я оплатил",
-                    callback_data=f"check_crypto_{invoice_id}_{tariff_key}_{period_key}"
+                    callback_data=(
+                        f"check_crypto_{invoice_id}"
+                        f"_{tariff_key}_{period_key}"
+                    )
                 )],
                 [InlineKeyboardButton(
                     text="❌ Отмена",
@@ -709,7 +736,6 @@ async def cb_pay_crypto(
 @dp.callback_query(F.data.startswith("check_crypto_"))
 async def cb_check_crypto(callback: CallbackQuery):
     parts = callback.data.split("_")
-    # check_crypto_INVOICEID_TARIFF_PERIOD
     invoice_id = int(parts[2])
     tariff_key = parts[3]
     period_key = parts[4]
@@ -726,11 +752,6 @@ async def cb_check_crypto(callback: CallbackQuery):
             tariff_key=tariff_key,
             period_key=period_key
         )
-        logger.info(
-            f"CryptoBot payment from "
-            f"{callback.from_user.id}: "
-            f"{tariff_key}:{period_key}"
-        )
     elif result["ok"] and result["status"] == "active":
         await callback.answer(
             "⏳ Оплата ещё не поступила. "
@@ -744,12 +765,12 @@ async def cb_check_crypto(callback: CallbackQuery):
         )
 
 
-# ========== ОПЛАТА: ПЕРЕВОД НА КАРТУ ==========
+# ========== ОПЛАТА: ССЫЛКА НА ПЕРЕВОД ==========
 @dp.callback_query(
-    F.data == "pay_card",
+    F.data == "pay_link",
     BuyProxy.choosing_payment
 )
-async def cb_pay_card(
+async def cb_pay_link(
     callback: CallbackQuery, state: FSMContext
 ):
     data = await state.get_data()
@@ -758,100 +779,122 @@ async def cb_pay_card(
     tariff = TARIFFS.get(tariff_key, TARIFFS["ru"])
     period_data = PERIODS.get(period_key, PERIODS["7"])
 
-    await state.set_state(BuyProxy.waiting_screenshot)
-    await state.update_data(
-        tariff=tariff_key,
-        period=period_key
+    check = api_check_before_buy(
+        tariff["country"], period_data["days"]
     )
+    if not check["ok"]:
+        await state.clear()
+        await callback.message.edit_text(
+            f"❌ <b>{check['error']}</b>\n\n"
+            f"Попробуй позже или напиши админу.",
+            reply_markup=after_buy_kb(),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+
+    await state.set_state(BuyProxy.waiting_confirm)
+    await state.update_data(tariff=tariff_key, period=period_key)
+
+    # Сохраняем заявку
+    pending_payments[callback.from_user.id] = {
+        "tariff": tariff_key,
+        "period": period_key,
+    }
 
     await callback.message.edit_text(
-        f"💳 <b>Оплата переводом на карту</b>\n\n"
+        f"💳 <b>Оплата переводом</b>\n\n"
         f"📦 Заказ: <b>{tariff['name']} — "
         f"{period_data['name']}</b>\n"
         f"💵 Сумма: <b>{period_data['price']} ₽</b>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"💳 Карта: <code>{CARD_NUMBER}</code>\n"
-        f"👤 Получатель: <b>{CARD_HOLDER}</b>\n\n"
+        f"<b>Инструкция:</b>\n\n"
+        f"1️⃣ Нажми кнопку <b>«Оплатить»</b> ниже\n"
+        f"2️⃣ Переведи ровно "
+        f"<b>{period_data['price']} ₽</b>\n"
+        f"3️⃣ Вернись сюда и нажми "
+        f"<b>«Я оплатил»</b>\n"
+        f"4️⃣ Админ проверит и ты получишь "
+        f"прокси 🎉\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📸 После оплаты <b>отправь скриншот</b> "
-        f"чека прямо сюда 👇",
-        reply_markup=cancel_waiting_kb(),
+        f"⏰ Проверка обычно занимает до 15 минут",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"💳 Оплатить {period_data['price']} ₽",
+                url=PAYMENT_LINK
+            )],
+            [InlineKeyboardButton(
+                text="✅ Я оплатил",
+                callback_data="paid_link"
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="cancel"
+            )],
+        ]),
         parse_mode="HTML"
     )
     await callback.answer()
 
 
-@dp.message(
-    F.photo,
-    BuyProxy.waiting_screenshot
-)
-async def handle_screenshot(
-    message: Message, state: FSMContext
-):
-    data = await state.get_data()
-    tariff_key = data.get("tariff", "ru")
-    period_key = data.get("period", "7")
-    tariff = TARIFFS.get(tariff_key, TARIFFS["ru"])
-    period_data = PERIODS.get(period_key, PERIODS["7"])
-
+@dp.callback_query(F.data == "paid_link")
+async def cb_paid_link(callback: CallbackQuery, state: FSMContext):
     await state.clear()
 
-    user = message.from_user
+    user = callback.from_user
+    payment = pending_payments.get(user.id)
+
+    if not payment:
+        await callback.message.edit_text(
+            "❌ Заявка не найдена. Попробуй заново.",
+            reply_markup=main_kb(),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+
+    tariff = TARIFFS.get(payment["tariff"], TARIFFS["ru"])
+    period_data = PERIODS.get(payment["period"], PERIODS["7"])
+
     user_link = (
         f'<a href="tg://user?id={user.id}">'
         f'{user.first_name}</a>'
     )
 
-    # Сохраняем в pending
-    payment_id = str(message.message_id)
-    pending_payments[payment_id] = {
-        "user_id": user.id,
-        "tariff": tariff_key,
-        "period": period_key,
-        "username": user.username or "нет",
-    }
-
-    # Отправляем админу
-    await bot.send_photo(
+    # Уведомляем админа
+    await bot.send_message(
         chat_id=ADMIN_ID,
-        photo=message.photo[-1].file_id,
-        caption=(
-            f"💳 <b>Новая оплата!</b>\n\n"
+        text=(
+            f"💳 <b>Новая оплата по ссылке!</b>\n\n"
             f"👤 Клиент: {user_link}\n"
             f"🆔 ID: <code>{user.id}</code>\n"
             f"📦 Тариф: <b>{tariff['name']}</b>\n"
             f"📅 Срок: <b>{period_data['name']}</b>\n"
-            f"💵 Сумма: <b>{period_data['price']} ₽</b>"
+            f"💵 Сумма: <b>{period_data['price']} ₽</b>\n\n"
+            f"Проверь поступление и нажми кнопку 👇"
         ),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
-                text="✅ Подтвердить оплату",
-                callback_data=f"approve_{payment_id}"
+                text="✅ Подтвердить",
+                callback_data=f"approve_{user.id}"
             )],
             [InlineKeyboardButton(
                 text="❌ Отклонить",
-                callback_data=f"reject_{payment_id}"
+                callback_data=f"reject_{user.id}"
             )],
         ]),
         parse_mode="HTML"
     )
 
-    await message.answer(
-        "✅ <b>Скриншот получен!</b>\n\n"
-        "⏳ Ожидай подтверждения от админа.\n"
+    await callback.message.edit_text(
+        "✅ <b>Заявка отправлена!</b>\n\n"
+        "⏳ Админ проверит оплату и ты получишь "
+        "прокси.\n"
         "Обычно это занимает до 15 минут.",
         reply_markup=menu_btn(),
         parse_mode="HTML"
     )
-
-
-@dp.message(BuyProxy.waiting_screenshot)
-async def handle_not_photo(message: Message):
-    await message.answer(
-        "📸 Отправь именно <b>скриншот</b> (фото) чека!",
-        reply_markup=cancel_waiting_kb(),
-        parse_mode="HTML"
-    )
+    await callback.answer()
 
 
 # ========== АДМИН: ПОДТВЕРЖДЕНИЕ / ОТКЛОНЕНИЕ ==========
@@ -861,41 +904,32 @@ async def cb_approve(callback: CallbackQuery):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
-    payment_id = callback.data.split("_")[1]
-    payment = pending_payments.pop(payment_id, None)
+    user_id = int(callback.data.split("_")[1])
+    payment = pending_payments.pop(user_id, None)
 
     if not payment:
-        await callback.answer(
-            "Заявка не найдена", show_alert=True
-        )
+        await callback.answer("Заявка не найдена", show_alert=True)
         return
 
-    await callback.message.edit_caption(
-        caption=(
-            callback.message.caption
-            + "\n\n✅ <b>ПОДТВЕРЖДЕНО</b>"
-        ),
+    await callback.message.edit_text(
+        callback.message.text + "\n\n✅ <b>ПОДТВЕРЖДЕНО</b>",
         parse_mode="HTML"
     )
     await callback.answer("Подтверждено!")
 
     await bot.send_message(
-        payment["user_id"],
+        user_id,
         "⏳ <b>Оплата подтверждена! Покупаю прокси...</b>",
         parse_mode="HTML"
     )
 
     await deliver_proxy(
-        chat_id=payment["user_id"],
+        chat_id=user_id,
         tariff_key=payment["tariff"],
         period_key=payment["period"]
     )
 
-    logger.info(
-        f"Card payment approved for "
-        f"{payment['user_id']}: "
-        f"{payment['tariff']}:{payment['period']}"
-    )
+    logger.info(f"Link payment approved for {user_id}")
 
 
 @dp.callback_query(F.data.startswith("reject_"))
@@ -904,31 +938,22 @@ async def cb_reject(callback: CallbackQuery):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
-    payment_id = callback.data.split("_")[1]
-    payment = pending_payments.pop(payment_id, None)
+    user_id = int(callback.data.split("_")[1])
+    pending_payments.pop(user_id, None)
 
-    if not payment:
-        await callback.answer(
-            "Заявка не найдена", show_alert=True
-        )
-        return
-
-    await callback.message.edit_caption(
-        caption=(
-            callback.message.caption
-            + "\n\n❌ <b>ОТКЛОНЕНО</b>"
-        ),
+    await callback.message.edit_text(
+        callback.message.text + "\n\n❌ <b>ОТКЛОНЕНО</b>",
         parse_mode="HTML"
     )
     await callback.answer("Отклонено")
 
     await bot.send_message(
-        payment["user_id"],
+        user_id,
         "❌ <b>Оплата отклонена.</b>\n\n"
         "Возможные причины:\n"
         "├ Сумма не совпадает\n"
-        "├ Скриншот нечитаемый\n"
-        "└ Оплата не найдена\n\n"
+        "├ Перевод не найден\n"
+        "└ Истекло время ожидания\n\n"
         "Напиши админу если считаешь "
         "что это ошибка.",
         reply_markup=main_kb(),
