@@ -17,8 +17,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # ===================== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ =====================
 load_dotenv()
 
-API_KEY = os.getenv("PROXY6_API_KEY")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+API_KEY = "2ceb6b52bf-9b7fd55343-c444559a23"
+BOT_TOKEN = "8124149270:AAFRVZ_q6rA9f9cScJIEs0lxYYYFlEGapvI"
 
 if not API_KEY or not BOT_TOKEN:
     raise ValueError(
