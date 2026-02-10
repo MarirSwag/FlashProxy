@@ -1,6 +1,8 @@
+import os
 import requests
 import asyncio
 import logging
+from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import (
     InlineKeyboardButton,
@@ -12,11 +14,21 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# ===================== НАСТРОЙКИ =====================
-API_KEY = "2ceb6b52bf-9b7fd55343-c444559a23"
-BOT_TOKEN = "8124149270:AAFRVZ_q6rA9f9cScJIEs0lxYYYFlEGapvI"
-BASE_URL = f"https://px6.link/api/{API_KEY}"
+# ===================== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ =====================
+load_dotenv()
 
+API_KEY = os.getenv("PROXY6_API_KEY")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not API_KEY or not BOT_TOKEN:
+    raise ValueError(
+        "Установи переменные окружения:\n"
+        "PROXY6_API_KEY=твой_ключ\n"
+        "BOT_TOKEN=твой_токен"
+    )
+
+# ===================== НАСТРОЙКИ =====================
+BASE_URL = f"https://px6.link/api/{API_KEY}"
 PROXY_VERSION = 6
 PROXY_TYPE = "socks"
 
@@ -202,9 +214,7 @@ def tariff_kb() -> InlineKeyboardMarkup:
 def period_kb() -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(
-            text=(
-                f"📅 {p['name']} — {p['price']} ₽"
-            ),
+            text=f"📅 {p['name']} — {p['price']} ₽",
             callback_data=f"period_{code}"
         )]
         for code, p in PERIODS.items()
@@ -407,7 +417,6 @@ async def cb_period(callback: CallbackQuery, state: FSMContext):
     tariff_key = data.get("tariff", "ru")
     tariff = TARIFFS.get(tariff_key, TARIFFS["ru"])
 
-    # Наличие
     count_result = api_get_count(tariff["country"])
     if count_result["ok"] and int(count_result["count"]) > 0:
         stock = f"📊 В наличии: <b>{count_result['count']} шт.</b>"
@@ -420,6 +429,7 @@ async def cb_period(callback: CallbackQuery, state: FSMContext):
         f"🧾 <b>Твой заказ:</b>\n\n"
         f"📦 Тариф: <b>{tariff['name']}</b>\n"
         f"🌍 Локация: <b>{tariff['short']}</b>\n"
+        f"🔧 Тип: <b>SOCKS5</b>\n"
         f"📅 Срок: <b>{period_data['name']}</b>\n"
         f"💵 Цена: <b>{period_data['price']} ₽</b>\n"
         f"{stock}\n\n"
@@ -459,24 +469,14 @@ async def cb_confirm(callback: CallbackQuery, state: FSMContext):
         user = result["user"]
         password = result["pass"]
         date_end = result["date_end"]
-        proxy_type = result["type"]
 
-        # Ссылка для Telegram
-        if proxy_type == "socks":
-            tg_link = (
-                f"https://t.me/socks"
-                f"?server={host}"
-                f"&port={port}"
-                f"&user={user}"
-                f"&pass={password}"
-            )
-        else:
-            tg_link = (
-                f"https://t.me/proxy"
-                f"?server={host}"
-                f"&port={port}"
-                f"&secret={password}"
-            )
+        tg_link = (
+            f"https://t.me/socks"
+            f"?server={host}"
+            f"&port={port}"
+            f"&user={user}"
+            f"&pass={password}"
+        )
 
         raw = f"{host}:{port}:{user}:{password}"
 
@@ -484,6 +484,7 @@ async def cb_confirm(callback: CallbackQuery, state: FSMContext):
             f"✅ <b>Прокси готов!</b>\n\n"
             f"📦 Тариф: <b>{tariff['name']}</b>\n"
             f"🌍 Локация: <b>{tariff['short']}</b>\n"
+            f"🔧 Тип: <b>SOCKS5</b>\n"
             f"📅 Срок: <b>{period_data['name']}</b>\n"
             f"💵 Оплачено: <b>{period_data['price']} ₽</b>\n"
             f"⏰ Действует до: <b>{date_end}</b>\n\n"
@@ -494,7 +495,7 @@ async def cb_confirm(callback: CallbackQuery, state: FSMContext):
             f"🔑 Пароль: <code>{password}</code>\n\n"
             f"📋 Строка: <code>{raw}</code>\n\n"
             f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"📱 <b>Ссылка для Telegram:</b>\n"
+            f"📱 <b>Ссылка для Telegram (SOCKS5):</b>\n"
             f"👇 Нажми — прокси подключится\n\n"
             f"{tg_link}",
             reply_markup=after_buy_kb(),
