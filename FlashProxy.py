@@ -1,6 +1,9 @@
 import requests
 import asyncio
 import logging
+import json
+import os
+from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import (
     InlineKeyboardButton,
@@ -10,7 +13,7 @@ from aiogram.types import (
     PreCheckoutQuery,
     Message
 )
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -25,6 +28,11 @@ PAYMENT_LINK = "https://www.tbank.ru/cf/5COiqw9ez0B"
 BASE_URL = f"https://px6.link/api/{API_KEY}"
 PROXY_VERSION = 4
 PROXY_TYPE = "socks"
+
+DATA_FILE = "bot_data.json"
+
+# Режим тех. работ (False = бот работает)
+maintenance_mode = False
 
 # ===================== ТАРИФЫ =====================
 TARIFFS = {
@@ -116,6 +124,12 @@ HOW_IT_WORKS_TEXT = (
     "а ты даже не замечаешь блокировок."
 )
 
+MAINTENANCE_TEXT = (
+    "🔧 <b>Тех. работы</b>\n\n"
+    "Бот временно на обслуживании.\n"
+    "Попробуй позже — скоро всё заработает!"
+)
+
 # ===================== ЛОГИРОВАНИЕ =====================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -128,12 +142,65 @@ dp = Dispatcher(storage=storage)
 pending_payments = {}
 
 
+# ===================== ХРАНИЛИЩЕ =====================
+def load_data() -> dict:
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return {"users": {}, "proxies": {}}
+
+
+def save_data(data: dict):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def save_user(user_id: int, first_name: str, username: str):
+    data = load_data()
+    uid = str(user_id)
+    if uid not in data["users"]:
+        data["users"][uid] = {
+            "first_name": first_name,
+            "username": username or "",
+            "joined": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        }
+        save_data(data)
+        return True
+    return False
+
+
+def save_proxy(user_id: int, proxy_info: dict):
+    data = load_data()
+    uid = str(user_id)
+    if uid not in data["proxies"]:
+        data["proxies"][uid] = []
+    data["proxies"][uid].append(proxy_info)
+    save_data(data)
+
+
+def get_user_proxies(user_id: int) -> list:
+    data = load_data()
+    return data["proxies"].get(str(user_id), [])
+
+
+def get_all_proxies() -> dict:
+    data = load_data()
+    return data["proxies"]
+
+
 # ===================== СОСТОЯНИЯ =====================
 class BuyProxy(StatesGroup):
     choosing_tariff = State()
     choosing_period = State()
     choosing_payment = State()
     waiting_confirm = State()
+
+
+class BroadcastState(StatesGroup):
+    waiting_message = State()
 
 
 # ===================== PROXY6 API =====================
@@ -236,6 +303,20 @@ def api_buy_proxy(country: str, period: int) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+def api_check_proxy(proxy_id: str) -> dict:
+    try:
+        url = f"{BASE_URL}/check?ids={proxy_id}"
+        data = requests.get(url, timeout=15).json()
+        if data["status"] == "yes":
+            return {
+                "ok": True,
+                "working": data.get("proxy_status", False),
+            }
+        return {"ok": False, "error": data.get("error", "?")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 # ===================== ВЫДАЧА ПРОКСИ =====================
 async def deliver_proxy(
     chat_id: int,
@@ -256,6 +337,7 @@ async def deliver_proxy(
         user = result["user"]
         password = result["pass"]
         date_end = result["date_end"]
+        proxy_id = result["id"]
 
         tg_link = (
             f"https://t.me/socks"
@@ -265,6 +347,22 @@ async def deliver_proxy(
             f"&pass={password}"
         )
         raw = f"{host}:{port}:{user}:{password}"
+
+        save_proxy(chat_id, {
+            "id": str(proxy_id),
+            "host": host,
+            "port": port,
+            "user": user,
+            "pass": password,
+            "tariff": tariff["name"],
+            "tariff_key": tariff_key,
+            "country": tariff["short"],
+            "period": period_data["name"],
+            "period_key": period_key,
+            "price": period_data["price"],
+            "date_end": date_end,
+            "bought": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        })
 
         await bot.send_message(
             chat_id,
@@ -305,6 +403,10 @@ def main_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(
             text="🛒 Купить прокси",
             callback_data="buy"
+        )],
+        [InlineKeyboardButton(
+            text="📋 Мои прокси",
+            callback_data="my_proxies"
         )],
         [
             InlineKeyboardButton(
@@ -415,12 +517,100 @@ def menu_btn() -> InlineKeyboardMarkup:
     ])
 
 
+def admin_kb() -> InlineKeyboardMarkup:
+    global maintenance_mode
+    if maintenance_mode:
+        maint_text = "✅ Тех. работы ВКЛ — выключить"
+    else:
+        maint_text = "🔧 Тех. работы ВЫКЛ — включить"
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="📊 Статистика",
+            callback_data="adm_stats"
+        )],
+        [InlineKeyboardButton(
+            text="👥 Пользователи",
+            callback_data="adm_users"
+        )],
+        [InlineKeyboardButton(
+            text="🟢 Активные прокси",
+            callback_data="adm_active"
+        )],
+        [InlineKeyboardButton(
+            text="💰 Баланс Proxy6",
+            callback_data="adm_balance"
+        )],
+        [InlineKeyboardButton(
+            text="📢 Рассылка",
+            callback_data="adm_broadcast"
+        )],
+        [InlineKeyboardButton(
+            text=maint_text,
+            callback_data="adm_maintenance"
+        )],
+    ])
+
+
+def admin_back_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="⬅️ Админ-панель",
+            callback_data="adm_back"
+        )]
+    ])
+
+
+# ===================== ТЕХ. РАБОТЫ =====================
+def is_maintenance(user_id: int) -> bool:
+    global maintenance_mode
+    if maintenance_mode and user_id != ADMIN_ID:
+        return True
+    return False
+
+
 # ===================== ОБРАБОТЧИКИ =====================
 @dp.message(CommandStart())
-async def cmd_start(message: types.Message, state: FSMContext):
+async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
+
+    user = message.from_user
+
+    if is_maintenance(user.id):
+        await message.answer(
+            MAINTENANCE_TEXT,
+            parse_mode="HTML"
+        )
+        return
+
+    is_new = save_user(user.id, user.first_name, user.username)
+
+    if is_new:
+        user_link = (
+            f'<a href="tg://user?id={user.id}">'
+            f'{user.first_name}</a>'
+        )
+        username_text = (
+            f"@{user.username}" if user.username else "нет"
+        )
+        data = load_data()
+        total_users = len(data["users"])
+
+        try:
+            await bot.send_message(
+                ADMIN_ID,
+                f"👤 <b>Новый пользователь!</b>\n\n"
+                f"├ Имя: {user_link}\n"
+                f"├ Username: {username_text}\n"
+                f"├ ID: <code>{user.id}</code>\n"
+                f"└ Всего: <b>{total_users}</b>",
+                parse_mode="HTML"
+            )
+        except:
+            pass
+
     await message.answer(
-        f"👋 Привет, <b>{message.from_user.first_name}</b>!\n\n"
+        f"👋 Привет, <b>{user.first_name}</b>!\n\n"
         f"🔐 Персональные SOCKS5 прокси для Telegram\n\n"
         f"📦 <b>Два тарифа:</b>\n\n"
         f"🚀 <b>RU-Скорость</b> — всё летает, "
@@ -444,6 +634,14 @@ async def cmd_start(message: types.Message, state: FSMContext):
 @dp.callback_query(F.data == "menu")
 async def cb_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
+
+    if is_maintenance(callback.from_user.id):
+        await callback.message.edit_text(
+            MAINTENANCE_TEXT, parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+
     await callback.message.edit_text(
         "🏠 <b>Главное меню</b>\n\nВыбери действие:",
         reply_markup=main_kb(),
@@ -485,9 +683,127 @@ async def cb_how_it_works(callback: CallbackQuery):
     await callback.answer()
 
 
+# ========== МОИ ПРОКСИ ==========
+@dp.callback_query(F.data == "my_proxies")
+async def cb_my_proxies(callback: CallbackQuery):
+    if is_maintenance(callback.from_user.id):
+        await callback.message.edit_text(
+            MAINTENANCE_TEXT, parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+
+    proxies = get_user_proxies(callback.from_user.id)
+
+    if not proxies:
+        await callback.message.edit_text(
+            "📋 <b>Мои прокси</b>\n\n"
+            "У тебя пока нет прокси.\n"
+            "Нажми «Купить прокси» чтобы начать!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🛒 Купить прокси",
+                    callback_data="buy"
+                )],
+                [InlineKeyboardButton(
+                    text="⬅️ Меню",
+                    callback_data="menu"
+                )],
+            ]),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+
+    text = f"📋 <b>Мои прокси ({len(proxies)} шт.):</b>\n\n"
+
+    for i, p in enumerate(proxies[-5:], 1):
+        try:
+            end_date = datetime.strptime(
+                p["date_end"], "%Y-%m-%d %H:%M:%S"
+            )
+            if end_date > datetime.now():
+                days_left = (end_date - datetime.now()).days
+                status = f"🟢 Активен ({days_left} дн.)"
+            else:
+                status = "🔴 Истёк"
+        except:
+            status = "⚪ Неизвестно"
+
+        text += (
+            f"<b>{i}.</b> {p.get('tariff', '?')}\n"
+            f"├ {p.get('country', '?')}\n"
+            f"├ Срок: {p.get('period', '?')}\n"
+            f"├ До: {p.get('date_end', '?')}\n"
+            f"├ {status}\n"
+            f"└ <code>{p['host']}:{p['port']}"
+            f":{p['user']}:{p['pass']}</code>\n\n"
+        )
+
+    buttons = []
+    for i, p in enumerate(proxies[-5:], 1):
+        try:
+            end_date = datetime.strptime(
+                p["date_end"], "%Y-%m-%d %H:%M:%S"
+            )
+            if end_date > datetime.now():
+                buttons.append([InlineKeyboardButton(
+                    text=f"🔍 Проверить прокси #{i}",
+                    callback_data=f"check_{p['id']}"
+                )])
+        except:
+            pass
+
+    buttons.append([InlineKeyboardButton(
+        text="🛒 Купить ещё", callback_data="buy"
+    )])
+    buttons.append([InlineKeyboardButton(
+        text="⬅️ Меню", callback_data="menu"
+    )])
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+# ========== ПРОВЕРКА ПРОКСИ ==========
+@dp.callback_query(F.data.startswith("check_"))
+async def cb_check_proxy(callback: CallbackQuery):
+    proxy_id = callback.data.split("_")[1]
+    await callback.answer("🔍 Проверяю...")
+
+    result = api_check_proxy(proxy_id)
+
+    if result["ok"]:
+        if result["working"]:
+            await callback.answer(
+                "✅ Прокси работает!", show_alert=True
+            )
+        else:
+            await callback.answer(
+                "❌ Прокси не работает. Напиши админу.",
+                show_alert=True
+            )
+    else:
+        await callback.answer(
+            f"⚠️ Ошибка: {result['error']}",
+            show_alert=True
+        )
+
+
 # ========== ШАГ 1: ТАРИФ ==========
 @dp.callback_query(F.data == "buy")
 async def cb_buy(callback: CallbackQuery, state: FSMContext):
+    if is_maintenance(callback.from_user.id):
+        await callback.message.edit_text(
+            MAINTENANCE_TEXT, parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+
     await state.clear()
     await state.set_state(BuyProxy.choosing_tariff)
     await callback.message.edit_text(
@@ -551,7 +867,7 @@ async def cb_back_period(
     await callback.answer()
 
 
-# ========== ШАГ 3: СПОСОБ ОПЛАТЫ ==========
+# ========== ШАГ 3: ОПЛАТА ==========
 @dp.callback_query(
     F.data.startswith("period_"),
     BuyProxy.choosing_period
@@ -584,7 +900,7 @@ async def cb_period(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ========== ОПЛАТА: TELEGRAM STARS ==========
+# ========== STARS ==========
 @dp.callback_query(
     F.data == "pay_stars",
     BuyProxy.choosing_payment
@@ -661,13 +977,8 @@ async def successful_payment(message: Message):
         period_key=period_key
     )
 
-    logger.info(
-        f"Stars payment from {message.from_user.id}: "
-        f"{tariff_key}:{period_key}"
-    )
 
-
-# ========== ОПЛАТА: ССЫЛКА ==========
+# ========== ССЫЛКА ==========
 @dp.callback_query(
     F.data == "pay_link",
     BuyProxy.choosing_payment
@@ -797,7 +1108,7 @@ async def cb_paid_link(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ========== АДМИН ==========
+# ========== АДМИН: ОПЛАТА ==========
 @dp.callback_query(F.data.startswith("approve_"))
 async def cb_approve(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -859,9 +1170,600 @@ async def cb_reject(callback: CallbackQuery):
     )
 
 
+# ========== АДМИН-ПАНЕЛЬ ==========
+@dp.message(Command("admin"))
+async def cmd_admin(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    data = load_data()
+    total_users = len(data["users"])
+    total_proxies = 0
+    active_proxies = 0
+    total_income = 0
+
+    for uid, proxies in data["proxies"].items():
+        for p in proxies:
+            total_proxies += 1
+            total_income += p.get("price", 0)
+            try:
+                end_date = datetime.strptime(
+                    p["date_end"], "%Y-%m-%d %H:%M:%S"
+                )
+                if end_date > datetime.now():
+                    active_proxies += 1
+            except:
+                pass
+
+    balance = api_get_balance()
+    balance_text = (
+        f"{balance['balance']} {balance['currency']}"
+        if balance["ok"] else "Ошибка"
+    )
+
+    global maintenance_mode
+    maint_status = "🔴 ВКЛ" if maintenance_mode else "🟢 ВЫКЛ"
+
+    await message.answer(
+        f"👑 <b>Админ-панель</b>\n\n"
+        f"📊 <b>Статистика:</b>\n"
+        f"├ 👥 Пользователей: <b>{total_users}</b>\n"
+        f"├ 📦 Всего покупок: <b>{total_proxies}</b>\n"
+        f"├ 🟢 Активных прокси: <b>{active_proxies}</b>\n"
+        f"├ 💵 Доход: <b>{total_income} ₽</b>\n"
+        f"├ 💰 Баланс Proxy6: <b>{balance_text}</b>\n"
+        f"└ 🔧 Тех. работы: <b>{maint_status}</b>\n\n"
+        f"Выбери действие 👇",
+        reply_markup=admin_kb(),
+        parse_mode="HTML"
+    )
+
+
+@dp.callback_query(F.data == "adm_back")
+async def cb_adm_back(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    await state.clear()
+
+    data = load_data()
+    total_users = len(data["users"])
+    total_proxies = 0
+    active_proxies = 0
+    total_income = 0
+
+    for uid, proxies in data["proxies"].items():
+        for p in proxies:
+            total_proxies += 1
+            total_income += p.get("price", 0)
+            try:
+                end_date = datetime.strptime(
+                    p["date_end"], "%Y-%m-%d %H:%M:%S"
+                )
+                if end_date > datetime.now():
+                    active_proxies += 1
+            except:
+                pass
+
+    balance = api_get_balance()
+    balance_text = (
+        f"{balance['balance']} {balance['currency']}"
+        if balance["ok"] else "Ошибка"
+    )
+
+    global maintenance_mode
+    maint_status = "🔴 ВКЛ" if maintenance_mode else "🟢 ВЫКЛ"
+
+    await callback.message.edit_text(
+        f"👑 <b>Админ-панель</b>\n\n"
+        f"📊 <b>Статистика:</b>\n"
+        f"├ 👥 Пользователей: <b>{total_users}</b>\n"
+        f"├ 📦 Всего покупок: <b>{total_proxies}</b>\n"
+        f"├ 🟢 Активных прокси: <b>{active_proxies}</b>\n"
+        f"├ 💵 Доход: <b>{total_income} ₽</b>\n"
+        f"├ 💰 Баланс Proxy6: <b>{balance_text}</b>\n"
+        f"└ 🔧 Тех. работы: <b>{maint_status}</b>\n\n"
+        f"Выбери действие 👇",
+        reply_markup=admin_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+# ========== ТЕХ. РАБОТЫ ==========
+@dp.callback_query(F.data == "adm_maintenance")
+async def cb_adm_maintenance(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+
+    global maintenance_mode
+    maintenance_mode = not maintenance_mode
+
+    if maintenance_mode:
+        await callback.answer(
+            "🔧 Тех. работы ВКЛЮЧЕНЫ. "
+            "Бот недоступен для клиентов.",
+            show_alert=True
+        )
+    else:
+        await callback.answer(
+            "✅ Тех. работы ВЫКЛЮЧЕНЫ. "
+            "Бот снова работает.",
+            show_alert=True
+        )
+
+    # Обновляем панель
+    data = load_data()
+    total_users = len(data["users"])
+    total_proxies = 0
+    active_proxies = 0
+    total_income = 0
+
+    for uid, proxies in data["proxies"].items():
+        for p in proxies:
+            total_proxies += 1
+            total_income += p.get("price", 0)
+            try:
+                end_date = datetime.strptime(
+                    p["date_end"], "%Y-%m-%d %H:%M:%S"
+                )
+                if end_date > datetime.now():
+                    active_proxies += 1
+            except:
+                pass
+
+    balance = api_get_balance()
+    balance_text = (
+        f"{balance['balance']} {balance['currency']}"
+        if balance["ok"] else "Ошибка"
+    )
+
+    maint_status = "🔴 ВКЛ" if maintenance_mode else "🟢 ВЫКЛ"
+
+    await callback.message.edit_text(
+        f"👑 <b>Админ-панель</b>\n\n"
+        f"📊 <b>Статистика:</b>\n"
+        f"├ 👥 Пользователей: <b>{total_users}</b>\n"
+        f"├ 📦 Всего покупок: <b>{total_proxies}</b>\n"
+        f"├ 🟢 Активных прокси: <b>{active_proxies}</b>\n"
+        f"├ 💵 Доход: <b>{total_income} ₽</b>\n"
+        f"├ 💰 Баланс Proxy6: <b>{balance_text}</b>\n"
+        f"└ 🔧 Тех. работы: <b>{maint_status}</b>\n\n"
+        f"Выбери действие 👇",
+        reply_markup=admin_kb(),
+        parse_mode="HTML"
+    )
+
+
+# ========== СТАТИСТИКА ==========
+@dp.callback_query(F.data == "adm_stats")
+async def cb_adm_stats(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+
+    data = load_data()
+    today = datetime.now()
+
+    users_today = users_week = users_month = 0
+    for uid, info in data["users"].items():
+        try:
+            joined = datetime.strptime(
+                info["joined"], "%Y-%m-%d %H:%M"
+            )
+            diff = (today - joined).days
+            if diff == 0:
+                users_today += 1
+            if diff <= 7:
+                users_week += 1
+            if diff <= 30:
+                users_month += 1
+        except:
+            pass
+
+    total_proxies = active_proxies = 0
+    total_income = income_today = 0
+    income_week = income_month = 0
+    purchases_today = purchases_week = 0
+    purchases_month = 0
+    tariff_stats = {}
+    period_stats = {}
+
+    for uid, proxies in data["proxies"].items():
+        for p in proxies:
+            total_proxies += 1
+            price = p.get("price", 0)
+            total_income += price
+
+            t = p.get("tariff", "?")
+            tariff_stats[t] = tariff_stats.get(t, 0) + 1
+            pr = p.get("period", "?")
+            period_stats[pr] = period_stats.get(pr, 0) + 1
+
+            try:
+                bought = datetime.strptime(
+                    p["bought"], "%Y-%m-%d %H:%M"
+                )
+                diff = (today - bought).days
+                if diff == 0:
+                    purchases_today += 1
+                    income_today += price
+                if diff <= 7:
+                    purchases_week += 1
+                    income_week += price
+                if diff <= 30:
+                    purchases_month += 1
+                    income_month += price
+            except:
+                pass
+
+            try:
+                end = datetime.strptime(
+                    p["date_end"], "%Y-%m-%d %H:%M:%S"
+                )
+                if end > today:
+                    active_proxies += 1
+            except:
+                pass
+
+    tariff_text = ""
+    for name, count in sorted(
+        tariff_stats.items(), key=lambda x: x[1], reverse=True
+    ):
+        tariff_text += f"├ {name}: <b>{count}</b>\n"
+
+    period_text = ""
+    for name, count in sorted(
+        period_stats.items(), key=lambda x: x[1], reverse=True
+    ):
+        period_text += f"├ {name}: <b>{count}</b>\n"
+
+    await callback.message.edit_text(
+        f"📊 <b>Подробная статистика</b>\n\n"
+        f"👥 <b>Пользователи:</b>\n"
+        f"├ Всего: <b>{len(data['users'])}</b>\n"
+        f"├ Сегодня: <b>{users_today}</b>\n"
+        f"├ За неделю: <b>{users_week}</b>\n"
+        f"└ За месяц: <b>{users_month}</b>\n\n"
+        f"📦 <b>Покупки:</b>\n"
+        f"├ Всего: <b>{total_proxies}</b>\n"
+        f"├ Активных: <b>{active_proxies}</b>\n"
+        f"├ Сегодня: <b>{purchases_today}</b>\n"
+        f"├ За неделю: <b>{purchases_week}</b>\n"
+        f"└ За месяц: <b>{purchases_month}</b>\n\n"
+        f"💵 <b>Доход:</b>\n"
+        f"├ Всего: <b>{total_income} ₽</b>\n"
+        f"├ Сегодня: <b>{income_today} ₽</b>\n"
+        f"├ За неделю: <b>{income_week} ₽</b>\n"
+        f"└ За месяц: <b>{income_month} ₽</b>\n\n"
+        f"📦 <b>Тарифы:</b>\n{tariff_text}\n"
+        f"📅 <b>Периоды:</b>\n{period_text}",
+        reply_markup=admin_back_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+# ========== ПОЛЬЗОВАТЕЛИ ==========
+@dp.callback_query(F.data == "adm_users")
+async def cb_adm_users(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+
+    data = load_data()
+    users = data["users"]
+
+    if not users:
+        await callback.message.edit_text(
+            "👥 <b>Пользователей пока нет.</b>",
+            reply_markup=admin_back_kb(),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+
+    sorted_users = sorted(
+        users.items(),
+        key=lambda x: x[1].get("joined", ""),
+        reverse=True
+    )[:20]
+
+    text = f"👥 <b>Последние 20 пользователей:</b>\n\n"
+    for uid, info in sorted_users:
+        un = info.get("username", "")
+        un_text = f"@{un}" if un else "—"
+        purchases = len(data["proxies"].get(uid, []))
+        text += (
+            f"├ {info.get('first_name', '?')} | "
+            f"{un_text}\n"
+            f"│ ID: <code>{uid}</code> | "
+            f"Покупок: {purchases} | "
+            f"{info.get('joined', '?')}\n\n"
+        )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=admin_back_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+# ========== АКТИВНЫЕ ПРОКСИ ==========
+@dp.callback_query(F.data == "adm_active")
+async def cb_adm_active(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+
+    data = load_data()
+    now = datetime.now()
+    active_list = []
+
+    for user_id, proxies in data["proxies"].items():
+        user_info = data["users"].get(user_id, {})
+        for p in proxies:
+            try:
+                end_date = datetime.strptime(
+                    p["date_end"], "%Y-%m-%d %H:%M:%S"
+                )
+                if end_date > now:
+                    days_left = (end_date - now).days
+                    active_list.append({
+                        "user_id": user_id,
+                        "user_name": user_info.get(
+                            "first_name", "?"
+                        ),
+                        "proxy": p,
+                        "days_left": days_left,
+                    })
+            except:
+                pass
+
+    if not active_list:
+        await callback.message.edit_text(
+            "🟢 <b>Нет активных прокси.</b>",
+            reply_markup=admin_back_kb(),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+
+    active_list.sort(key=lambda x: x["days_left"])
+
+    text = (
+        f"🟢 <b>Активные прокси "
+        f"({len(active_list)} шт.):</b>\n\n"
+    )
+    for item in active_list[:20]:
+        p = item["proxy"]
+        d = item["days_left"]
+        emoji = "🔴" if d <= 1 else "🟡" if d <= 3 else "🟢"
+
+        text += (
+            f"{emoji} {item['user_name']} "
+            f"(ID: {item['user_id']})\n"
+            f"├ {p.get('tariff', '?')}\n"
+            f"├ {p['host']}:{p['port']}\n"
+            f"├ До: {p['date_end']}\n"
+            f"└ Осталось: <b>{d} дн.</b>\n\n"
+        )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=admin_back_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+# ========== БАЛАНС ==========
+@dp.callback_query(F.data == "adm_balance")
+async def cb_adm_balance(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+
+    balance = api_get_balance()
+
+    if balance["ok"]:
+        bal = float(balance["balance"])
+        text = (
+            f"💰 <b>Баланс Proxy6:</b>\n\n"
+            f"💵 <b>{balance['balance']} "
+            f"{balance['currency']}</b>\n\n"
+            f"📦 <b>Хватит на:</b>\n"
+        )
+        for code, p in PERIODS.items():
+            try:
+                url = (
+                    f"{BASE_URL}/getprice"
+                    f"?count=1&period={p['days']}"
+                    f"&version={PROXY_VERSION}"
+                )
+                price_data = requests.get(
+                    url, timeout=10
+                ).json()
+                if price_data["status"] == "yes":
+                    price = float(price_data["price"])
+                    can_buy = int(bal / price) if price > 0 else 0
+                    text += (
+                        f"├ {p['name']}: "
+                        f"<b>{can_buy} шт.</b> "
+                        f"({price} "
+                        f"{balance['currency']}/шт.)\n"
+                    )
+            except:
+                pass
+    else:
+        text = f"❌ Ошибка: {balance['error']}"
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=admin_back_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+# ========== РАССЫЛКА ==========
+@dp.callback_query(F.data == "adm_broadcast")
+async def cb_adm_broadcast(
+    callback: CallbackQuery, state: FSMContext
+):
+    if callback.from_user.id != ADMIN_ID:
+        return
+
+    await state.set_state(BroadcastState.waiting_message)
+
+    data = load_data()
+    total = len(data["users"])
+
+    await callback.message.edit_text(
+        f"📢 <b>Рассылка</b>\n\n"
+        f"Получателей: <b>{total}</b>\n\n"
+        f"Отправь сообщение для рассылки.\n"
+        f"Можно: текст, фото, видео.\n\n"
+        f"Или нажми «Отмена» 👇",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="adm_back"
+            )]
+        ]),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@dp.message(BroadcastState.waiting_message)
+async def handle_broadcast(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    await state.clear()
+
+    data = load_data()
+    users = data["users"]
+    total = len(users)
+    success = failed = 0
+
+    status_msg = await message.answer(
+        f"📢 <b>Рассылка...</b> 0/{total}",
+        parse_mode="HTML"
+    )
+
+    for uid in users:
+        try:
+            await message.copy_to(int(uid))
+            success += 1
+        except:
+            failed += 1
+        await asyncio.sleep(0.1)
+
+    await status_msg.edit_text(
+        f"📢 <b>Рассылка завершена!</b>\n\n"
+        f"├ ✅ Доставлено: <b>{success}</b>\n"
+        f"├ ❌ Ошибок: <b>{failed}</b>\n"
+        f"└ Всего: <b>{total}</b>",
+        parse_mode="HTML"
+    )
+
+
+# ========== АВТОПРОДЛЕНИЕ ==========
+async def check_expiring_proxies():
+    while True:
+        try:
+            all_proxies = get_all_proxies()
+
+            for uid_str, proxies in all_proxies.items():
+                uid = int(uid_str)
+
+                for p in proxies:
+                    try:
+                        end_date = datetime.strptime(
+                            p["date_end"], "%Y-%m-%d %H:%M:%S"
+                        )
+                        now = datetime.now()
+                        diff = end_date - now
+
+                        if (
+                            timedelta(days=1) < diff
+                            <= timedelta(days=2)
+                            and not p.get("notified_2d")
+                        ):
+                            tg_link = (
+                                f"https://t.me/socks"
+                                f"?server={p['host']}"
+                                f"&port={p['port']}"
+                                f"&user={p['user']}"
+                                f"&pass={p['pass']}"
+                            )
+                            await bot.send_message(
+                                uid,
+                                f"⚠️ <b>Прокси заканчивается "
+                                f"через 2 дня!</b>\n\n"
+                                f"📦 {p.get('tariff', '?')}\n"
+                                f"⏰ До: <b>{p['date_end']}</b>\n\n"
+                                f"📱 Ссылка: {tg_link}\n\n"
+                                f"Продли чтобы не потерять "
+                                f"доступ 👇",
+                                reply_markup=InlineKeyboardMarkup(
+                                    inline_keyboard=[
+                                        [InlineKeyboardButton(
+                                            text="🔄 Купить новый",
+                                            callback_data="buy"
+                                        )],
+                                    ]
+                                ),
+                                parse_mode="HTML"
+                            )
+                            p["notified_2d"] = True
+                            data = load_data()
+                            data["proxies"][uid_str] = proxies
+                            save_data(data)
+
+                        elif (
+                            timedelta(hours=0) < diff
+                            <= timedelta(days=1)
+                            and not p.get("notified_1d")
+                        ):
+                            await bot.send_message(
+                                uid,
+                                f"🔴 <b>Прокси истекает "
+                                f"СЕГОДНЯ!</b>\n\n"
+                                f"📦 {p.get('tariff', '?')}\n"
+                                f"⏰ До: <b>{p['date_end']}</b>\n\n"
+                                f"Купи новый прямо сейчас 👇",
+                                reply_markup=InlineKeyboardMarkup(
+                                    inline_keyboard=[
+                                        [InlineKeyboardButton(
+                                            text="🛒 Купить",
+                                            callback_data="buy"
+                                        )],
+                                    ]
+                                ),
+                                parse_mode="HTML"
+                            )
+                            p["notified_1d"] = True
+                            data = load_data()
+                            data["proxies"][uid_str] = proxies
+                            save_data(data)
+
+                    except Exception as e:
+                        logger.error(f"Notify error: {e}")
+
+        except Exception as e:
+            logger.error(f"Check expiring error: {e}")
+
+        await asyncio.sleep(3600)
+
+
 # ========== ЛЮБОЙ ТЕКСТ ==========
 @dp.message()
-async def handle_any(message: types.Message):
+async def handle_any(message: Message):
+    if is_maintenance(message.from_user.id):
+        await message.answer(
+            MAINTENANCE_TEXT, parse_mode="HTML"
+        )
+        return
+
     await message.answer(
         "Нажми /start 👇",
         reply_markup=main_kb()
@@ -871,6 +1773,7 @@ async def handle_any(message: types.Message):
 # ===================== ЗАПУСК =====================
 async def main():
     logger.info("Бот запущен")
+    asyncio.create_task(check_expiring_proxies())
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
