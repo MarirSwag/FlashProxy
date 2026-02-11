@@ -23,7 +23,7 @@ ADMIN_ID = 1967888210
 PAYMENT_LINK = "https://www.tbank.ru/cf/5COiqw9ez0B"
 
 BASE_URL = f"https://px6.link/api/{API_KEY}"
-PROXY_VERSION = 6
+PROXY_VERSION = 4
 PROXY_TYPE = "socks"
 
 # ===================== ТАРИФЫ =====================
