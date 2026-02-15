@@ -24,6 +24,14 @@ BOT_TOKEN = "8124149270:AAFRVZ_q6rA9f9cScJIEs0lxYYYFlEGapvI"
 ADMIN_ID = 1967888210
 
 PAYMENT_LINK = "https://www.tbank.ru/cf/5COiqw9ez0B"
+SUPPORT_LINK = "https://t.me/BloodMichine"
+
+ULTRA_LINK = (
+    "https://t.me/socks?server=193.58.122.141"
+    "&port=122&user=nordox&pass=johsiv-Tekmi1-riwpyt"
+)
+ULTRA_PRICE = 99
+ULTRA_STARS = 145
 
 BASE_URL = f"https://px6.link/api/{API_KEY}"
 PROXY_VERSION = 4
@@ -31,7 +39,6 @@ PROXY_TYPE = "socks"
 
 DATA_FILE = "bot_data.json"
 
-# Режим тех. работ (False = бот работает)
 maintenance_mode = False
 
 # ===================== ТАРИФЫ =====================
@@ -122,6 +129,29 @@ HOW_IT_WORKS_TEXT = (
     "💡 <b>Итог:</b> Ты один раз включаешь "
     "Flash Proxy, и Telegram работает всегда, "
     "а ты даже не замечаешь блокировок."
+)
+
+ULTRA_TEXT = (
+    "🚀 <b>Flash Proxy ULTRA — Интернет "
+    "без границ навсегда!</b>\n\n"
+    "Забудь про ежемесячные списания. "
+    "Один платёж — и Telegram работает всегда.\n\n"
+    "💸 Цена: <b>Всего 99 ₽</b> (Единоразово)\n\n"
+    "━━━━━━━━━━━━━━━━━━━━\n\n"
+    "❓ <b>Почему так дёшево и «Навсегда»? "
+    "В чём подвох?</b>\n\n"
+    "Мы играем в открытую. Обычные тарифы "
+    "(на месяц) — это личные выделенные серверы, "
+    "где вся скорость принадлежит только тебе.\n\n"
+    "Тариф ULTRA — это доступ к нашему "
+    "закрытому общему (Shared) каналу.\n\n"
+    "• На этом сервере сидят и другие "
+    "пользователи.\n"
+    "• Скорость может «плавать» в часы пик.\n"
+    "• Идеально подходит для переписки, "
+    "каналов и новостей.\n\n"
+    "━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Выбери способ оплаты 👇"
 )
 
 MAINTENANCE_TEXT = (
@@ -317,6 +347,46 @@ def api_check_proxy(proxy_id: str) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+# ===================== ВЫДАЧА ULTRA =====================
+async def deliver_ultra(chat_id: int):
+    save_proxy(chat_id, {
+        "id": "ultra_shared",
+        "host": "193.58.122.141",
+        "port": "122",
+        "user": "nordox",
+        "pass": "johsiv-Tekmi1-riwpyt",
+        "tariff": "♾ ULTRA",
+        "tariff_key": "ultra",
+        "country": "🌍 Shared",
+        "period": "Навсегда",
+        "period_key": "forever",
+        "price": ULTRA_PRICE,
+        "date_end": "2099-12-31 23:59:59",
+        "bought": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    })
+
+    await bot.send_message(
+        chat_id,
+        f"✅ <b>Flash Proxy ULTRA активирован!</b>\n\n"
+        f"📦 Тариф: <b>♾ ULTRA</b>\n"
+        f"🌍 Тип: <b>Shared SOCKS5</b>\n"
+        f"💵 Оплачено: <b>{ULTRA_PRICE} ₽</b>\n"
+        f"⏰ Срок: <b>Навсегда ♾</b>\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🖥 Сервер: <code>193.58.122.141</code>\n"
+        f"🚪 Порт: <code>122</code>\n"
+        f"👤 Логин: <code>nordox</code>\n"
+        f"🔑 Пароль: <code>"
+        f"johsiv-Tekmi1-riwpyt</code>\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📱 <b>Ссылка для Telegram (SOCKS5):</b>\n"
+        f"👇 Нажми — прокси подключится\n\n"
+        f"{ULTRA_LINK}",
+        reply_markup=after_buy_kb(),
+        parse_mode="HTML"
+    )
+
+
 # ===================== ВЫДАЧА ПРОКСИ =====================
 async def deliver_proxy(
     chat_id: int,
@@ -391,7 +461,7 @@ async def deliver_proxy(
         await bot.send_message(
             chat_id,
             f"❌ <b>Ошибка:</b> {result['error']}\n\n"
-            f"Напиши админу для решения проблемы.",
+            f"Напиши в поддержку для решения проблемы.",
             reply_markup=after_buy_kb(),
             parse_mode="HTML"
         )
@@ -418,6 +488,10 @@ def main_kb() -> InlineKeyboardMarkup:
                 callback_data="how_it_works"
             ),
         ],
+        [InlineKeyboardButton(
+            text="💬 Поддержка",
+            url=SUPPORT_LINK
+        )],
     ])
 
 
@@ -430,6 +504,10 @@ def tariff_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(
             text="🛡️ EU-Обход (Нидерланды)",
             callback_data="tariff_nl"
+        )],
+        [InlineKeyboardButton(
+            text="♾ Flash Proxy ULTRA (Навсегда) — 99₽",
+            callback_data="tariff_ultra"
         )],
         [InlineKeyboardButton(
             text="❌ Отмена",
@@ -489,10 +567,16 @@ def after_buy_kb() -> InlineKeyboardMarkup:
             text="📖 Инструкция",
             callback_data="instruction"
         )],
-        [InlineKeyboardButton(
-            text="⬅️ Меню",
-            callback_data="menu"
-        )],
+        [
+            InlineKeyboardButton(
+                text="💬 Поддержка",
+                url=SUPPORT_LINK
+            ),
+            InlineKeyboardButton(
+                text="⬅️ Меню",
+                callback_data="menu"
+            ),
+        ],
     ])
 
 
@@ -564,23 +648,17 @@ def admin_back_kb() -> InlineKeyboardMarkup:
 # ===================== ТЕХ. РАБОТЫ =====================
 def is_maintenance(user_id: int) -> bool:
     global maintenance_mode
-    if maintenance_mode and user_id != ADMIN_ID:
-        return True
-    return False
+    return maintenance_mode and user_id != ADMIN_ID
 
 
 # ===================== ОБРАБОТЧИКИ =====================
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-
     user = message.from_user
 
     if is_maintenance(user.id):
-        await message.answer(
-            MAINTENANCE_TEXT,
-            parse_mode="HTML"
-        )
+        await message.answer(MAINTENANCE_TEXT, parse_mode="HTML")
         return
 
     is_new = save_user(user.id, user.first_name, user.username)
@@ -595,7 +673,6 @@ async def cmd_start(message: Message, state: FSMContext):
         )
         data = load_data()
         total_users = len(data["users"])
-
         try:
             await bot.send_message(
                 ADMIN_ID,
@@ -621,7 +698,8 @@ async def cmd_start(message: Message, state: FSMContext):
         f"├ 1 неделя — <b>50 ₽</b>\n"
         f"├ 1 месяц — <b>199 ₽</b>\n"
         f"├ 2 месяца — <b>349 ₽</b>\n"
-        f"└ 3 месяца — <b>499 ₽</b>\n\n"
+        f"├ 3 месяца — <b>499 ₽</b>\n"
+        f"└ ♾ ULTRA — <b>99 ₽ навсегда</b>\n\n"
         f"💳 <b>Способы оплаты:</b>\n"
         f"├ ⭐ Telegram Stars\n"
         f"└ 💳 Перевод по ссылке\n\n"
@@ -634,7 +712,6 @@ async def cmd_start(message: Message, state: FSMContext):
 @dp.callback_query(F.data == "menu")
 async def cb_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-
     if is_maintenance(callback.from_user.id):
         await callback.message.edit_text(
             MAINTENANCE_TEXT, parse_mode="HTML"
@@ -661,7 +738,6 @@ async def cb_cancel(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ========== ИНСТРУКЦИЯ ==========
 @dp.callback_query(F.data == "instruction")
 async def cb_instruction(callback: CallbackQuery):
     await callback.message.edit_text(
@@ -672,7 +748,6 @@ async def cb_instruction(callback: CallbackQuery):
     await callback.answer()
 
 
-# ========== КАК ЭТО РАБОТАЕТ ==========
 @dp.callback_query(F.data == "how_it_works")
 async def cb_how_it_works(callback: CallbackQuery):
     await callback.message.edit_text(
@@ -702,12 +777,10 @@ async def cb_my_proxies(callback: CallbackQuery):
             "Нажми «Купить прокси» чтобы начать!",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
-                    text="🛒 Купить прокси",
-                    callback_data="buy"
+                    text="🛒 Купить прокси", callback_data="buy"
                 )],
                 [InlineKeyboardButton(
-                    text="⬅️ Меню",
-                    callback_data="menu"
+                    text="⬅️ Меню", callback_data="menu"
                 )],
             ]),
             parse_mode="HTML"
@@ -724,7 +797,10 @@ async def cb_my_proxies(callback: CallbackQuery):
             )
             if end_date > datetime.now():
                 days_left = (end_date - datetime.now()).days
-                status = f"🟢 Активен ({days_left} дн.)"
+                if days_left > 3650:
+                    status = "♾ Навсегда"
+                else:
+                    status = f"🟢 Активен ({days_left} дн.)"
             else:
                 status = "🔴 Истёк"
         except:
@@ -734,7 +810,6 @@ async def cb_my_proxies(callback: CallbackQuery):
             f"<b>{i}.</b> {p.get('tariff', '?')}\n"
             f"├ {p.get('country', '?')}\n"
             f"├ Срок: {p.get('period', '?')}\n"
-            f"├ До: {p.get('date_end', '?')}\n"
             f"├ {status}\n"
             f"└ <code>{p['host']}:{p['port']}"
             f":{p['user']}:{p['pass']}</code>\n\n"
@@ -742,17 +817,18 @@ async def cb_my_proxies(callback: CallbackQuery):
 
     buttons = []
     for i, p in enumerate(proxies[-5:], 1):
-        try:
-            end_date = datetime.strptime(
-                p["date_end"], "%Y-%m-%d %H:%M:%S"
-            )
-            if end_date > datetime.now():
-                buttons.append([InlineKeyboardButton(
-                    text=f"🔍 Проверить прокси #{i}",
-                    callback_data=f"check_{p['id']}"
-                )])
-        except:
-            pass
+        if p.get("id") != "ultra_shared":
+            try:
+                end_date = datetime.strptime(
+                    p["date_end"], "%Y-%m-%d %H:%M:%S"
+                )
+                if end_date > datetime.now():
+                    buttons.append([InlineKeyboardButton(
+                        text=f"🔍 Проверить прокси #{i}",
+                        callback_data=f"check_{p['id']}"
+                    )])
+            except:
+                pass
 
     buttons.append([InlineKeyboardButton(
         text="🛒 Купить ещё", callback_data="buy"
@@ -769,14 +845,11 @@ async def cb_my_proxies(callback: CallbackQuery):
     await callback.answer()
 
 
-# ========== ПРОВЕРКА ПРОКСИ ==========
 @dp.callback_query(F.data.startswith("check_"))
 async def cb_check_proxy(callback: CallbackQuery):
     proxy_id = callback.data.split("_")[1]
     await callback.answer("🔍 Проверяю...")
-
     result = api_check_proxy(proxy_id)
-
     if result["ok"]:
         if result["working"]:
             await callback.answer(
@@ -784,13 +857,12 @@ async def cb_check_proxy(callback: CallbackQuery):
             )
         else:
             await callback.answer(
-                "❌ Прокси не работает. Напиши админу.",
+                "❌ Прокси не работает. Напиши в поддержку.",
                 show_alert=True
             )
     else:
         await callback.answer(
-            f"⚠️ Ошибка: {result['error']}",
-            show_alert=True
+            f"⚠️ Ошибка: {result['error']}", show_alert=True
         )
 
 
@@ -816,8 +888,125 @@ async def cb_buy(callback: CallbackQuery, state: FSMContext):
         "🛡️ <b>EU-Обход (Нидерланды)</b>\n"
         "├ Работает при любых блокировках\n"
         "├ Полный доступ ко всему\n"
-        "└ ⚠️ Пинг чуть выше",
+        "└ ⚠️ Пинг чуть выше\n\n"
+        "♾ <b>ULTRA (Навсегда)</b>\n"
+        "├ Один платёж — работает всегда\n"
+        "├ Shared канал\n"
+        "└ Всего 99 ₽",
         reply_markup=tariff_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+# ========== ULTRA ==========
+@dp.callback_query(
+    F.data == "tariff_ultra",
+    BuyProxy.choosing_tariff
+)
+async def cb_ultra(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(tariff="ultra")
+    await state.set_state(BuyProxy.choosing_payment)
+
+    await callback.message.edit_text(
+        ULTRA_TEXT,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"⭐ Telegram Stars ({ULTRA_STARS} ⭐)",
+                callback_data="pay_stars_ultra"
+            )],
+            [InlineKeyboardButton(
+                text=f"💳 Перевод ({ULTRA_PRICE} ₽)",
+                callback_data="pay_link_ultra"
+            )],
+            [InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data="buy"
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="cancel"
+            )],
+        ]),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@dp.callback_query(
+    F.data == "pay_stars_ultra",
+    BuyProxy.choosing_payment
+)
+async def cb_ultra_stars(
+    callback: CallbackQuery, state: FSMContext
+):
+    await state.clear()
+
+    prices = [
+        LabeledPrice(
+            label="♾ Flash Proxy ULTRA — Навсегда",
+            amount=ULTRA_STARS
+        )
+    ]
+
+    await callback.message.delete()
+
+    await bot.send_invoice(
+        chat_id=callback.from_user.id,
+        title="♾ Flash Proxy ULTRA",
+        description=(
+            "SOCKS5 прокси навсегда\n"
+            "Shared канал\n"
+            "Один платёж — работает всегда"
+        ),
+        payload="ultra:forever",
+        currency="XTR",
+        prices=prices,
+    )
+    await callback.answer()
+
+
+@dp.callback_query(
+    F.data == "pay_link_ultra",
+    BuyProxy.choosing_payment
+)
+async def cb_ultra_link(
+    callback: CallbackQuery, state: FSMContext
+):
+    await state.set_state(BuyProxy.waiting_confirm)
+    await state.update_data(tariff="ultra", period="forever")
+
+    pending_payments[callback.from_user.id] = {
+        "tariff": "ultra",
+        "period": "forever",
+    }
+
+    await callback.message.edit_text(
+        f"💳 <b>Оплата ULTRA</b>\n\n"
+        f"📦 Заказ: <b>♾ Flash Proxy ULTRA</b>\n"
+        f"💵 Сумма: <b>{ULTRA_PRICE} ₽</b>\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<b>Инструкция:</b>\n\n"
+        f"1️⃣ Нажми кнопку <b>«Оплатить»</b>\n"
+        f"2️⃣ Переведи ровно <b>{ULTRA_PRICE} ₽</b>\n"
+        f"3️⃣ Вернись и нажми <b>«Я оплатил»</b>\n"
+        f"4️⃣ Получи прокси навсегда 🎉\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"⏰ Проверка до 15 минут",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"💳 Оплатить {ULTRA_PRICE} ₽",
+                url=PAYMENT_LINK
+            )],
+            [InlineKeyboardButton(
+                text="✅ Я оплатил",
+                callback_data="paid_link"
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="cancel"
+            )],
+        ]),
         parse_mode="HTML"
     )
     await callback.answer()
@@ -921,7 +1110,7 @@ async def cb_pay_stars(
         await state.clear()
         await callback.message.edit_text(
             f"❌ <b>{check['error']}</b>\n\n"
-            f"Попробуй позже или напиши админу.",
+            f"Попробуй позже или напиши в поддержку.",
             reply_markup=after_buy_kb(),
             parse_mode="HTML"
         )
@@ -966,6 +1155,10 @@ async def successful_payment(message: Message):
     tariff_key = parts[0]
     period_key = parts[1]
 
+    if tariff_key == "ultra":
+        await deliver_ultra(message.from_user.id)
+        return
+
     await message.answer(
         "⏳ <b>Оплата получена! Покупаю прокси...</b>",
         parse_mode="HTML"
@@ -999,7 +1192,7 @@ async def cb_pay_link(
         await state.clear()
         await callback.message.edit_text(
             f"❌ <b>{check['error']}</b>\n\n"
-            f"Попробуй позже или напиши админу.",
+            f"Попробуй позже или напиши в поддержку.",
             reply_markup=after_buy_kb(),
             parse_mode="HTML"
         )
@@ -1052,7 +1245,6 @@ async def cb_pay_link(
 @dp.callback_query(F.data == "paid_link")
 async def cb_paid_link(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-
     user = callback.from_user
     payment = pending_payments.get(user.id)
 
@@ -1065,8 +1257,16 @@ async def cb_paid_link(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    tariff = TARIFFS.get(payment["tariff"], TARIFFS["ru"])
-    period_data = PERIODS.get(payment["period"], PERIODS["7"])
+    if payment["tariff"] == "ultra":
+        tariff_name = "♾ ULTRA"
+        period_name = "Навсегда"
+        price = ULTRA_PRICE
+    else:
+        tariff = TARIFFS.get(payment["tariff"], TARIFFS["ru"])
+        period_data = PERIODS.get(payment["period"], PERIODS["7"])
+        tariff_name = tariff["name"]
+        period_name = period_data["name"]
+        price = period_data["price"]
 
     user_link = (
         f'<a href="tg://user?id={user.id}">'
@@ -1079,9 +1279,9 @@ async def cb_paid_link(callback: CallbackQuery, state: FSMContext):
             f"💳 <b>Новая оплата по ссылке!</b>\n\n"
             f"👤 Клиент: {user_link}\n"
             f"🆔 ID: <code>{user.id}</code>\n"
-            f"📦 Тариф: <b>{tariff['name']}</b>\n"
-            f"📅 Срок: <b>{period_data['name']}</b>\n"
-            f"💵 Сумма: <b>{period_data['price']} ₽</b>\n\n"
+            f"📦 Тариф: <b>{tariff_name}</b>\n"
+            f"📅 Срок: <b>{period_name}</b>\n"
+            f"💵 Сумма: <b>{price} ₽</b>\n\n"
             f"Проверь поступление и нажми кнопку 👇"
         ),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1100,8 +1300,7 @@ async def cb_paid_link(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "✅ <b>Заявка отправлена!</b>\n\n"
         "⏳ Админ проверит оплату и ты получишь "
-        "прокси.\n"
-        "Обычно это занимает до 15 минут.",
+        "прокси.\nОбычно это занимает до 15 минут.",
         reply_markup=menu_btn(),
         parse_mode="HTML"
     )
@@ -1127,6 +1326,10 @@ async def cb_approve(callback: CallbackQuery):
         parse_mode="HTML"
     )
     await callback.answer("Подтверждено!")
+
+    if payment["tariff"] == "ultra":
+        await deliver_ultra(user_id)
+        return
 
     await bot.send_message(
         user_id,
@@ -1163,7 +1366,7 @@ async def cb_reject(callback: CallbackQuery):
         "├ Сумма не совпадает\n"
         "├ Перевод не найден\n"
         "└ Истекло время ожидания\n\n"
-        "Напиши админу если считаешь "
+        "Напиши в поддержку если считаешь "
         "что это ошибка.",
         reply_markup=main_kb(),
         parse_mode="HTML"
@@ -1178,9 +1381,7 @@ async def cmd_admin(message: Message):
 
     data = load_data()
     total_users = len(data["users"])
-    total_proxies = 0
-    active_proxies = 0
-    total_income = 0
+    total_proxies = active_proxies = total_income = 0
 
     for uid, proxies in data["proxies"].items():
         for p in proxies:
@@ -1209,9 +1410,9 @@ async def cmd_admin(message: Message):
         f"📊 <b>Статистика:</b>\n"
         f"├ 👥 Пользователей: <b>{total_users}</b>\n"
         f"├ 📦 Всего покупок: <b>{total_proxies}</b>\n"
-        f"├ 🟢 Активных прокси: <b>{active_proxies}</b>\n"
+        f"├ 🟢 Активных: <b>{active_proxies}</b>\n"
         f"├ 💵 Доход: <b>{total_income} ₽</b>\n"
-        f"├ 💰 Баланс Proxy6: <b>{balance_text}</b>\n"
+        f"├ 💰 Proxy6: <b>{balance_text}</b>\n"
         f"└ 🔧 Тех. работы: <b>{maint_status}</b>\n\n"
         f"Выбери действие 👇",
         reply_markup=admin_kb(),
@@ -1227,9 +1428,7 @@ async def cb_adm_back(callback: CallbackQuery, state: FSMContext):
 
     data = load_data()
     total_users = len(data["users"])
-    total_proxies = 0
-    active_proxies = 0
-    total_income = 0
+    total_proxies = active_proxies = total_income = 0
 
     for uid, proxies in data["proxies"].items():
         for p in proxies:
@@ -1258,9 +1457,9 @@ async def cb_adm_back(callback: CallbackQuery, state: FSMContext):
         f"📊 <b>Статистика:</b>\n"
         f"├ 👥 Пользователей: <b>{total_users}</b>\n"
         f"├ 📦 Всего покупок: <b>{total_proxies}</b>\n"
-        f"├ 🟢 Активных прокси: <b>{active_proxies}</b>\n"
+        f"├ 🟢 Активных: <b>{active_proxies}</b>\n"
         f"├ 💵 Доход: <b>{total_income} ₽</b>\n"
-        f"├ 💰 Баланс Proxy6: <b>{balance_text}</b>\n"
+        f"├ 💰 Proxy6: <b>{balance_text}</b>\n"
         f"└ 🔧 Тех. работы: <b>{maint_status}</b>\n\n"
         f"Выбери действие 👇",
         reply_markup=admin_kb(),
@@ -1269,7 +1468,6 @@ async def cb_adm_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ========== ТЕХ. РАБОТЫ ==========
 @dp.callback_query(F.data == "adm_maintenance")
 async def cb_adm_maintenance(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -1278,25 +1476,14 @@ async def cb_adm_maintenance(callback: CallbackQuery):
     global maintenance_mode
     maintenance_mode = not maintenance_mode
 
-    if maintenance_mode:
-        await callback.answer(
-            "🔧 Тех. работы ВКЛЮЧЕНЫ. "
-            "Бот недоступен для клиентов.",
-            show_alert=True
-        )
-    else:
-        await callback.answer(
-            "✅ Тех. работы ВЫКЛЮЧЕНЫ. "
-            "Бот снова работает.",
-            show_alert=True
-        )
+    status = "ВКЛЮЧЕНЫ" if maintenance_mode else "ВЫКЛЮЧЕНЫ"
+    await callback.answer(
+        f"🔧 Тех. работы {status}.", show_alert=True
+    )
 
-    # Обновляем панель
     data = load_data()
     total_users = len(data["users"])
-    total_proxies = 0
-    active_proxies = 0
-    total_income = 0
+    total_proxies = active_proxies = total_income = 0
 
     for uid, proxies in data["proxies"].items():
         for p in proxies:
@@ -1324,9 +1511,9 @@ async def cb_adm_maintenance(callback: CallbackQuery):
         f"📊 <b>Статистика:</b>\n"
         f"├ 👥 Пользователей: <b>{total_users}</b>\n"
         f"├ 📦 Всего покупок: <b>{total_proxies}</b>\n"
-        f"├ 🟢 Активных прокси: <b>{active_proxies}</b>\n"
+        f"├ 🟢 Активных: <b>{active_proxies}</b>\n"
         f"├ 💵 Доход: <b>{total_income} ₽</b>\n"
-        f"├ 💰 Баланс Proxy6: <b>{balance_text}</b>\n"
+        f"├ 💰 Proxy6: <b>{balance_text}</b>\n"
         f"└ 🔧 Тех. работы: <b>{maint_status}</b>\n\n"
         f"Выбери действие 👇",
         reply_markup=admin_kb(),
@@ -1334,7 +1521,6 @@ async def cb_adm_maintenance(callback: CallbackQuery):
     )
 
 
-# ========== СТАТИСТИКА ==========
 @dp.callback_query(F.data == "adm_stats")
 async def cb_adm_stats(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -1350,20 +1536,16 @@ async def cb_adm_stats(callback: CallbackQuery):
                 info["joined"], "%Y-%m-%d %H:%M"
             )
             diff = (today - joined).days
-            if diff == 0:
-                users_today += 1
-            if diff <= 7:
-                users_week += 1
-            if diff <= 30:
-                users_month += 1
+            if diff == 0: users_today += 1
+            if diff <= 7: users_week += 1
+            if diff <= 30: users_month += 1
         except:
             pass
 
     total_proxies = active_proxies = 0
     total_income = income_today = 0
     income_week = income_month = 0
-    purchases_today = purchases_week = 0
-    purchases_month = 0
+    purchases_today = purchases_week = purchases_month = 0
     tariff_stats = {}
     period_stats = {}
 
@@ -1399,8 +1581,7 @@ async def cb_adm_stats(callback: CallbackQuery):
                 end = datetime.strptime(
                     p["date_end"], "%Y-%m-%d %H:%M:%S"
                 )
-                if end > today:
-                    active_proxies += 1
+                if end > today: active_proxies += 1
             except:
                 pass
 
@@ -1442,7 +1623,6 @@ async def cb_adm_stats(callback: CallbackQuery):
     await callback.answer()
 
 
-# ========== ПОЛЬЗОВАТЕЛИ ==========
 @dp.callback_query(F.data == "adm_users")
 async def cb_adm_users(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -1480,14 +1660,11 @@ async def cb_adm_users(callback: CallbackQuery):
         )
 
     await callback.message.edit_text(
-        text,
-        reply_markup=admin_back_kb(),
-        parse_mode="HTML"
+        text, reply_markup=admin_back_kb(), parse_mode="HTML"
     )
     await callback.answer()
 
 
-# ========== АКТИВНЫЕ ПРОКСИ ==========
 @dp.callback_query(F.data == "adm_active")
 async def cb_adm_active(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -1535,26 +1712,33 @@ async def cb_adm_active(callback: CallbackQuery):
     for item in active_list[:20]:
         p = item["proxy"]
         d = item["days_left"]
-        emoji = "🔴" if d <= 1 else "🟡" if d <= 3 else "🟢"
+        if d > 3650:
+            emoji = "♾"
+            days_text = "навсегда"
+        elif d <= 1:
+            emoji = "🔴"
+            days_text = f"{d} дн."
+        elif d <= 3:
+            emoji = "🟡"
+            days_text = f"{d} дн."
+        else:
+            emoji = "🟢"
+            days_text = f"{d} дн."
 
         text += (
             f"{emoji} {item['user_name']} "
             f"(ID: {item['user_id']})\n"
             f"├ {p.get('tariff', '?')}\n"
             f"├ {p['host']}:{p['port']}\n"
-            f"├ До: {p['date_end']}\n"
-            f"└ Осталось: <b>{d} дн.</b>\n\n"
+            f"└ Осталось: <b>{days_text}</b>\n\n"
         )
 
     await callback.message.edit_text(
-        text,
-        reply_markup=admin_back_kb(),
-        parse_mode="HTML"
+        text, reply_markup=admin_back_kb(), parse_mode="HTML"
     )
     await callback.answer()
 
 
-# ========== БАЛАНС ==========
 @dp.callback_query(F.data == "adm_balance")
 async def cb_adm_balance(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -1584,10 +1768,8 @@ async def cb_adm_balance(callback: CallbackQuery):
                     price = float(price_data["price"])
                     can_buy = int(bal / price) if price > 0 else 0
                     text += (
-                        f"├ {p['name']}: "
-                        f"<b>{can_buy} шт.</b> "
-                        f"({price} "
-                        f"{balance['currency']}/шт.)\n"
+                        f"├ {p['name']}: <b>{can_buy} шт.</b> "
+                        f"({price} {balance['currency']}/шт.)\n"
                     )
             except:
                 pass
@@ -1595,14 +1777,11 @@ async def cb_adm_balance(callback: CallbackQuery):
         text = f"❌ Ошибка: {balance['error']}"
 
     await callback.message.edit_text(
-        text,
-        reply_markup=admin_back_kb(),
-        parse_mode="HTML"
+        text, reply_markup=admin_back_kb(), parse_mode="HTML"
     )
     await callback.answer()
 
 
-# ========== РАССЫЛКА ==========
 @dp.callback_query(F.data == "adm_broadcast")
 async def cb_adm_broadcast(
     callback: CallbackQuery, state: FSMContext
@@ -1611,7 +1790,6 @@ async def cb_adm_broadcast(
         return
 
     await state.set_state(BroadcastState.waiting_message)
-
     data = load_data()
     total = len(data["users"])
 
@@ -1623,8 +1801,7 @@ async def cb_adm_broadcast(
         f"Или нажми «Отмена» 👇",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
-                text="❌ Отмена",
-                callback_data="adm_back"
+                text="❌ Отмена", callback_data="adm_back"
             )]
         ]),
         parse_mode="HTML"
@@ -1638,7 +1815,6 @@ async def handle_broadcast(message: Message, state: FSMContext):
         return
 
     await state.clear()
-
     data = load_data()
     users = data["users"]
     total = len(users)
@@ -1676,6 +1852,9 @@ async def check_expiring_proxies():
                 uid = int(uid_str)
 
                 for p in proxies:
+                    if p.get("id") == "ultra_shared":
+                        continue
+
                     try:
                         end_date = datetime.strptime(
                             p["date_end"], "%Y-%m-%d %H:%M:%S"
@@ -1759,15 +1938,9 @@ async def check_expiring_proxies():
 @dp.message()
 async def handle_any(message: Message):
     if is_maintenance(message.from_user.id):
-        await message.answer(
-            MAINTENANCE_TEXT, parse_mode="HTML"
-        )
+        await message.answer(MAINTENANCE_TEXT, parse_mode="HTML")
         return
-
-    await message.answer(
-        "Нажми /start 👇",
-        reply_markup=main_kb()
-    )
+    await message.answer("Нажми /start 👇", reply_markup=main_kb())
 
 
 # ===================== ЗАПУСК =====================
